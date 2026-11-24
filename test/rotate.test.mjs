@@ -47,7 +47,7 @@ test('New proxy gives a device a fresh, checked session and retires the one it m
   const port = await freePort();
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: path.resolve(import.meta.dirname, '..'),
-    env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOOKUP: 'http://lookup.test/json' },
+    env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOOKUP: 'http://lookup.test/json', RELAY_LOCAL_DASHBOARD: '1' },
     stdio: 'ignore',
   });
   const api = async (method, p, body) => {
@@ -98,7 +98,7 @@ test('New proxy needs a proxy with a session id', async () => {
   const port = await freePort();
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: path.resolve(import.meta.dirname, '..'),
-    env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOOKUP: 'http://lookup.test/json' },
+    env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOOKUP: 'http://lookup.test/json', RELAY_LOCAL_DASHBOARD: '1' },
     stdio: 'ignore',
   });
   try {
