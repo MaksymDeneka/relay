@@ -18,14 +18,19 @@ iPhone ──(router = this Mac)──▶ pf rdr ──▶ sing-box ──▶ SO
   to the internet (UDP, ICMP) is dropped, so nothing bypasses the proxy.
 - **sing-box** answers DNS with fake IPs (198.18.0.0/15), so each proxy receives the real
   domain name and resolves it on its side. Every device has its own selector, so switching one
-  device takes effect immediately and doesn't drop other devices' connections.
+  device between existing proxies, Direct and Block takes effect immediately and doesn't drop
+  other devices' connections. Adding or removing a device or a proxy restarts sing-box, so
+  every device reconnects once. That includes **new proxy**, and moving a device off a session
+  **new proxy** made (the session is removed then).
 - Relay doesn't need or enable IP forwarding, and the Mac's own traffic is never touched.
 - Modes per device: **Proxy** (chosen proxy), **Direct** (this Mac's own connection),
   **Block** (no internet). If a device's proxy is deleted, the device is blocked, not leaked.
   Direct mode resolves names on the Mac and refuses loopback and tailnet addresses, so a device
   can't reach services that only listen on this Mac. It is a selector choice like a proxy (a
   hop through a loopback SOCKS listener, port 17891, where that check runs), so switching any
-  device between Proxy, Direct and Block takes effect without restarting sing-box.
+  device between Proxy, Direct and Block normally takes effect without restarting sing-box.
+  The exception is leaving a session **new proxy** made: the session is removed, which restarts
+  sing-box.
 - DNS from devices gets fake-IP answers for A records only; other query types are refused.
 - When the service stops, the anchor keeps only the block rules, so devices that still use this
   Mac as their router get no internet instead of being forwarded unproxied (macOS may have IP
@@ -140,9 +145,26 @@ http://user:pass@host:port
 
 Labels come from `sid-NNN` in the username, and the flag from `country-xx`. **Check** looks up
 each proxy's exit IP, location and latency through the proxy itself (HTTPS to ipinfo.io on port
-443, which proxies limited to web ports allow). **next proxy** under a device's
-route switches to the next proxy in the list that no other device uses and that hasn't failed
-its last check.
+443, which proxies limited to web ports allow).
+
+**new proxy** under a device's route gives it a fresh exit IP in one tap. Relay copies the
+device's proxy (or the first proxy with a numeric `sid-NNN` in its username) with a new random
+session number, checks it, and switches the device only if it works and exits on an IP no listed device
+uses. Sessions made this way are removed once no device uses them; imported proxies stay.
+Adding the new session restarts sing-box, so every phone reconnects once. If you change the
+device's route while the new session is being checked, your change wins.
+Without any `sid-` proxy, the link is **next proxy** instead: the next proxy in the list that no
+other device uses and that hasn't failed its last check.
+
+## IPv6
+
+Relay routes IPv4 only. If the router hands out public IPv6, listed phones can reach the
+internet over IPv6 straight through the router, around the proxy. The dashboard shows a red
+warning when this Mac sees a public IPv6 prefix on the LAN, or when a listed phone has a public
+IPv6 address (matched by MAC through the ARP and NDP tables). Only interfaces that serve listed
+devices count. Local-only IPv6 (`fd…` addresses,
+for example from a HomePod or Apple TV acting as a Thread border router) is ignored. The fix is
+to turn IPv6 off on the router.
 
 ## Limits
 

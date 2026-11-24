@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { checkPassword, clearCookie, LoginLimiter, loginPage, readSession, sessionCookie, validSession } from './lib/auth.mjs';
 import { checkDirect, checkProxy, mapLimit } from './lib/check.mjs';
 import { Gateway } from './lib/gateway.mjs';
+import { readIPv6Exposure } from './lib/ipv6.mjs';
 import { isPrivateIPv4, isValidIPv4, lanInterfaces, networkSummary } from './lib/network.mjs';
 import { PacketFilter } from './lib/pf.mjs';
-import { parseProxyList } from './lib/proxies.mjs';
+import { canRotate, parseProxyList, withNewSession } from './lib/proxies.mjs';
 import { SingBox } from './lib/singbox.mjs';
 import { Store } from './lib/store.mjs';
 
@@ -91,6 +92,15 @@ const dashboards = publicUrl
 const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
 const checking = new Set();
+let ipv6 = { key: null, value: null };
+async function ipv6Status() {
+  // arp and ndp are cheap, but the dashboard polls; refresh at most every 30 seconds, and at
+  // once when the device list changes.
+  const key = JSON.stringify(store.data.devices.map((d) => [d.id, d.ip, d.name]));
+  if (ipv6.key !== key || !ipv6.value || Date.now() - ipv6.value.at > 30000) ipv6 = { key, value: await readIPv6Exposure(store.data.devices) };
+  return ipv6.value;
+}
+const rotating = new Set();
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -115,6 +125,7 @@ function publicProxy(proxy, devices) {
   return {
     ...rest,
     hasPassword: Boolean(password),
+    rotatable: canRotate(proxy),
     usedBy: devices.filter((d) => d.mode === 'proxy' && d.proxyId === proxy.id).map((d) => d.id),
     checking: checking.has(proxy.id),
   };
@@ -122,11 +133,12 @@ function publicProxy(proxy, devices) {
 
 async function statePayload() {
   const { devices, proxies } = store.data;
-  const [network, pfStatus] = await Promise.all([networkSummary(), isRoot ? pf.status() : null]);
+  const [network, pfStatus, ipv6Exposure] = await Promise.all([networkSummary(), isRoot ? pf.status() : null, ipv6Status()]);
   return {
     devices,
     proxies: proxies.map((p) => publicProxy(p, devices)),
     network,
+    ipv6: ipv6Exposure,
     urls: dashboardUrls(),
     status: {
       root: isRoot,
@@ -206,6 +218,76 @@ function validateTarget(device, input) {
   if (device.mode === 'proxy' && !device.proxyId) device.mode = 'block';
 }
 
+/** Remove a proxy made by New proxy once no device points at it any more. */
+function retire(proxyId) {
+  const proxy = store.data.proxies.find((p) => p.id === proxyId);
+  if (proxy?.rotated && !store.data.devices.some((d) => d.proxyId === proxyId)) {
+    store.data.proxies = store.data.proxies.filter((p) => p !== proxy);
+  }
+}
+
+/** Proxies that other devices route through right now. */
+function activeProxies(except) {
+  const ids = new Set(store.data.devices.filter((d) => d !== except && d.mode === 'proxy').map((d) => d.proxyId));
+  return store.data.proxies.filter((p) => ids.has(p.id));
+}
+
+/**
+ * Give a device a fresh session of its proxy (or of the first proxy with a session id): a new
+ * exit IP. The new session is checked first, and must not exit where another device's proxy
+ * does. If the device changed while the check ran, the user's newer choice wins.
+ */
+async function rotateDevice(device) {
+  const current = store.data.proxies.find((p) => p.id === device.proxyId);
+  const template = canRotate(current) ? current : store.data.proxies.find(canRotate);
+  if (!template) throw new HttpError(400, 'New proxy needs a proxy with sid-NNN in its username. Import one first.');
+  if (rotating.has(device.id)) throw new HttpError(409, 'Already getting a new proxy for this device.');
+  rotating.add(device.id);
+  const rev = device.rev ?? 0;
+  try {
+    // Other devices' exits must be known and recent to compare against; sticky sessions can
+    // move to another IP over time.
+    await runChecks(activeProxies(device).filter((p) => !p.lastCheck || Date.now() - p.lastCheck.at > 10 * 60 * 1000));
+    let failure = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const candidate = withNewSession(template);
+      if (store.data.proxies.some((p) => p.id === candidate.id)) continue;
+      const result = await checkProxy(candidate, { timeoutMs: 10000 });
+      // Everything below runs without awaiting, so no other request can interleave with it.
+      if (!store.data.devices.includes(device)) throw new HttpError(404, 'Device not found.');
+      if ((device.rev ?? 0) !== rev) throw new HttpError(409, 'The device changed while getting a new proxy, so your change was kept.');
+      if (!result.ok) {
+        failure = `the new session did not work: ${result.error}`;
+        continue;
+      }
+      // Other devices' exits must be known and recent, or the comparison means nothing.
+      const others = activeProxies(device);
+      if (others.some((p) => checking.has(p.id) || !p.lastCheck || Date.now() - p.lastCheck.at > 15 * 60 * 1000)) {
+        throw new HttpError(409, 'Another device’s proxy is still being checked. Try again in a moment.');
+      }
+      // The point is a new IP: the device's own current exit counts as taken too.
+      const taken = new Set(others.filter((p) => p.lastCheck.ok).map((p) => p.lastCheck.ip));
+      if (device.mode === 'proxy' && current?.lastCheck?.ok) taken.add(current.lastCheck.ip);
+      if (taken.has(result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
+        failure = 'the provider kept giving an exit IP already in use';
+        continue;
+      }
+      const proxy = { ...candidate, rotated: true, addedAt: Date.now(), lastCheck: result };
+      const previous = device.proxyId;
+      store.data.proxies.push(proxy);
+      device.mode = 'proxy';
+      device.proxyId = proxy.id;
+      device.rev = rev + 1;
+      retire(previous);
+      store.save();
+      return { device, proxy: publicProxy(proxy, store.data.devices), ...(await applyAndReport()) };
+    }
+    throw new HttpError(502, `No new proxy: ${failure ?? 'try again'}.`);
+  } finally {
+    rotating.delete(device.id);
+  }
+}
+
 async function applyAndReport() {
   try {
     await gateway.apply();
@@ -257,11 +339,13 @@ async function handleApi(req, res, url) {
     return send(res, 200, { device, ...(await applyAndReport()) });
   }
 
-  const deviceMatch = route.match(/^\/devices\/([a-z0-9]+)(\/check)?$/);
+  const deviceMatch = route.match(/^\/devices\/([a-z0-9]+)(\/check|\/rotate)?$/);
   if (deviceMatch) {
     const device = store.data.devices.find((d) => d.id === deviceMatch[1]);
     if (!device) throw new HttpError(404, 'Device not found.');
-    if (deviceMatch[2] && method === 'POST') {
+    if (deviceMatch[2] && method !== 'POST') throw new HttpError(405, 'Method not allowed');
+    if (deviceMatch[2] === '/rotate') return send(res, 200, await rotateDevice(device));
+    if (deviceMatch[2] === '/check') {
       if (device.mode === 'direct') return send(res, 200, { result: await checkDirect() });
       if (device.mode === 'block') return send(res, 200, { result: { ok: false, error: 'This device is blocked.' } });
       const proxy = store.data.proxies.find((p) => p.id === device.proxyId);
@@ -276,12 +360,18 @@ async function handleApi(req, res, url) {
         Object.assign(next, validateDevice({ name: input.name ?? device.name, ip: input.ip ?? device.ip }, device.id));
       }
       validateTarget(next, input);
+      // A session made by New proxy belongs to its route: leaving Proxy mode lets it go.
+      if (next.mode !== 'proxy' && store.data.proxies.find((p) => p.id === next.proxyId)?.rotated) next.proxyId = null;
+      next.rev = (device.rev ?? 0) + 1;
+      const previous = device.proxyId;
       Object.assign(device, next);
+      if (previous !== device.proxyId) retire(previous);
       store.save();
       return send(res, 200, { device, ...(await applyAndReport()) });
     }
     if (method === 'DELETE') {
       store.data.devices = store.data.devices.filter((d) => d.id !== device.id);
+      retire(device.proxyId);
       store.save();
       return send(res, 200, { ok: true, ...(await applyAndReport()) });
     }
@@ -315,6 +405,7 @@ async function handleApi(req, res, url) {
     for (const device of store.data.devices) {
       if (device.proxyId && remove.has(device.proxyId)) {
         device.proxyId = null;
+        device.rev = (device.rev ?? 0) + 1;
         if (device.mode === 'proxy') device.mode = 'block';
         affected.push(device.name);
       }
