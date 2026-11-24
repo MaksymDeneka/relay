@@ -8,7 +8,7 @@ import { checkDirect, checkProxy, mapLimit } from './lib/check.mjs';
 import { Gateway } from './lib/gateway.mjs';
 import { isPrivateIPv4, isValidIPv4, lanInterfaces, networkSummary } from './lib/network.mjs';
 import { PacketFilter } from './lib/pf.mjs';
-import { parseProxyList } from './lib/proxies.mjs';
+import { canRotate, parseProxyList, withNewSession } from './lib/proxies.mjs';
 import { SingBox } from './lib/singbox.mjs';
 import { Store } from './lib/store.mjs';
 
@@ -91,6 +91,7 @@ const dashboards = publicUrl
 const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
 const checking = new Set();
+const rotating = new Set();
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -115,6 +116,7 @@ function publicProxy(proxy, devices) {
   return {
     ...rest,
     hasPassword: Boolean(password),
+    rotatable: canRotate(proxy),
     usedBy: devices.filter((d) => d.mode === 'proxy' && d.proxyId === proxy.id).map((d) => d.id),
     checking: checking.has(proxy.id),
   };
@@ -206,6 +208,57 @@ function validateTarget(device, input) {
   if (device.mode === 'proxy' && !device.proxyId) device.mode = 'block';
 }
 
+/** Remove a proxy made by New proxy once no device points at it any more. */
+function retire(proxyId) {
+  const proxy = store.data.proxies.find((p) => p.id === proxyId);
+  if (proxy?.rotated && !store.data.devices.some((d) => d.proxyId === proxyId)) {
+    store.data.proxies = store.data.proxies.filter((p) => p !== proxy);
+  }
+}
+
+/**
+ * Give a device a fresh session of its proxy (or of the first proxy with a session id): a new
+ * exit IP. The new session is checked first, and must not exit where this device or another
+ * listed device already does.
+ */
+async function rotateDevice(device) {
+  const current = store.data.proxies.find((p) => p.id === device.proxyId);
+  const template = canRotate(current) ? current : store.data.proxies.find(canRotate);
+  if (!template) throw new HttpError(400, 'New proxy needs a proxy with sid-… in its username. Import one first.');
+  if (rotating.has(device.id)) throw new HttpError(409, 'Already getting a new proxy for this device.');
+  rotating.add(device.id);
+  try {
+    const inUse = new Set(store.data.devices.map((d) => d.proxyId));
+    const avoid = new Set(store.data.proxies.filter((p) => inUse.has(p.id)).map((p) => p.lastCheck?.ip).filter(Boolean));
+    let failure = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const candidate = withNewSession(template);
+      if (store.data.proxies.some((p) => p.id === candidate.id)) continue;
+      const result = await checkProxy(candidate, { timeoutMs: 10000 });
+      if (!result.ok) {
+        failure = `the new session did not work: ${result.error}`;
+        continue;
+      }
+      if (avoid.has(result.ip)) {
+        failure = 'the provider kept giving an exit IP already in use';
+        continue;
+      }
+      if (!store.data.devices.includes(device)) throw new HttpError(404, 'Device not found.');
+      const proxy = { ...candidate, rotated: true, addedAt: Date.now(), lastCheck: result };
+      const previous = device.proxyId;
+      store.data.proxies.push(proxy);
+      device.mode = 'proxy';
+      device.proxyId = proxy.id;
+      retire(previous);
+      store.save();
+      return { device, proxy: publicProxy(proxy, store.data.devices), ...(await applyAndReport()) };
+    }
+    throw new HttpError(502, `No new proxy: ${failure ?? 'try again'}.`);
+  } finally {
+    rotating.delete(device.id);
+  }
+}
+
 async function applyAndReport() {
   try {
     await gateway.apply();
@@ -257,11 +310,12 @@ async function handleApi(req, res, url) {
     return send(res, 200, { device, ...(await applyAndReport()) });
   }
 
-  const deviceMatch = route.match(/^\/devices\/([a-z0-9]+)(\/check)?$/);
+  const deviceMatch = route.match(/^\/devices\/([a-z0-9]+)(\/check|\/rotate)?$/);
   if (deviceMatch) {
     const device = store.data.devices.find((d) => d.id === deviceMatch[1]);
     if (!device) throw new HttpError(404, 'Device not found.');
-    if (deviceMatch[2] && method === 'POST') {
+    if (deviceMatch[2] === '/rotate' && method === 'POST') return send(res, 200, await rotateDevice(device));
+    if (deviceMatch[2] === '/check' && method === 'POST') {
       if (device.mode === 'direct') return send(res, 200, { result: await checkDirect() });
       if (device.mode === 'block') return send(res, 200, { result: { ok: false, error: 'This device is blocked.' } });
       const proxy = store.data.proxies.find((p) => p.id === device.proxyId);
@@ -276,12 +330,15 @@ async function handleApi(req, res, url) {
         Object.assign(next, validateDevice({ name: input.name ?? device.name, ip: input.ip ?? device.ip }, device.id));
       }
       validateTarget(next, input);
+      const previous = device.proxyId;
       Object.assign(device, next);
+      if (previous !== device.proxyId) retire(previous);
       store.save();
       return send(res, 200, { device, ...(await applyAndReport()) });
     }
     if (method === 'DELETE') {
       store.data.devices = store.data.devices.filter((d) => d.id !== device.id);
+      retire(device.proxyId);
       store.save();
       return send(res, 200, { ok: true, ...(await applyAndReport()) });
     }

@@ -140,9 +140,14 @@ http://user:pass@host:port
 
 Labels come from `sid-NNN` in the username, and the flag from `country-xx`. **Check** looks up
 each proxy's exit IP, location and latency through the proxy itself (HTTPS to ipinfo.io on port
-443, which proxies limited to web ports allow). **next proxy** under a device's
-route switches to the next proxy in the list that no other device uses and that hasn't failed
-its last check.
+443, which proxies limited to web ports allow).
+
+**new proxy** under a device's route gives it a fresh exit IP in one tap. Relay copies the
+device's proxy (or the first proxy with `sid-NNN` in its username) with a new random session
+number, checks it, and switches the device only if it works and exits on an IP no listed device
+uses. Sessions made this way are removed once no device uses them; imported proxies stay.
+Without any `sid-` proxy, the link is **next proxy** instead: the next proxy in the list that no
+other device uses and that hasn't failed its last check.
 
 ## Limits
 

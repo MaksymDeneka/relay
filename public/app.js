@@ -2,7 +2,7 @@ const app = document.getElementById('app');
 const dialog = document.getElementById('dialog');
 const toasts = document.getElementById('toasts');
 
-const ui = { search: '', selected: new Set() };
+const ui = { search: '', selected: new Set(), rotating: new Set() };
 let session = { via: 'local' };
 let data = null;
 let live = { devices: {} };
@@ -221,7 +221,11 @@ function deviceRow(device) {
       'td',
       { 'data-label': 'Route' },
       h('button', { class: `route${blocked ? ' block' : ''}`, text: routeName(device), onclick: act(openPicker) }),
-      device.mode === 'proxy' && data.proxies.length > 1 ? h('div', { class: 'm' }, h('button', { class: 'link', text: 'next proxy', onclick: act(nextProxy) })) : null,
+      data.proxies.some((p) => p.rotatable)
+        ? h('div', { class: 'm' }, h('button', { class: 'link', text: ui.rotating.has(device.id) ? 'getting new proxy…' : 'new proxy', disabled: ui.rotating.has(device.id), onclick: act(newProxy) }))
+        : device.mode === 'proxy' && data.proxies.length > 1
+          ? h('div', { class: 'm' }, h('button', { class: 'link', text: 'next proxy', onclick: act(nextProxy) }))
+          : null,
     ),
     h('td', { 'data-label': 'Exit' }, exit),
     h(
@@ -333,6 +337,23 @@ async function setRoute(device, change, message) {
     if (change.proxyId && proxy && (!proxy.lastCheck || Date.now() - proxy.lastCheck.at > 10 * 60 * 1000)) startChecks([proxy.id]);
   } catch (e) {
     toast(e.message, true);
+  }
+}
+
+/** A fresh session of the device's proxy: a new exit IP, checked before the switch. */
+async function newProxy(device) {
+  if (ui.rotating.has(device.id)) return;
+  ui.rotating.add(device.id);
+  renderDevices();
+  try {
+    const result = await api('POST', `/devices/${device.id}/rotate`);
+    const check = result.proxy.lastCheck;
+    report(result, `${device.name} → ${check.ip}, ${place(check)}`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    ui.rotating.delete(device.id);
+    await refresh();
   }
 }
 

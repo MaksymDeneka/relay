@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseProxyList, parseProxyToken } from '../lib/proxies.mjs';
+import { canRotate, parseProxyList, parseProxyToken, withNewSession } from '../lib/proxies.mjs';
 
 test('parses spreadsheet rows with type and provider columns', () => {
   const text = [
@@ -41,4 +41,15 @@ test('the same proxy always gets the same id', () => {
   const a = parseProxyToken('h.example:1:u:p');
   const b = parseProxyToken('socks5://u:p@H.example:1');
   assert.equal(a.id, b.id);
+});
+
+test('a new session keeps everything but the session number', () => {
+  const [original] = parseProxyList('unlimited.example.com:1337:user1-country-us-sid-37067750-ttl-60-udp:secret').proxies;
+  assert.equal(canRotate(original), true);
+  const fresh = withNewSession(original, '12345678');
+  assert.equal(fresh.username, 'user1-country-us-sid-12345678-ttl-60-udp');
+  assert.deepEqual([fresh.host, fresh.port, fresh.password, fresh.type, fresh.country, fresh.label], ['unlimited.example.com', 1337, 'secret', 'socks5', 'US', 'sid 12345678']);
+  assert.notEqual(fresh.id, original.id);
+  assert.notEqual(withNewSession(original).username, original.username);
+  assert.equal(canRotate(parseProxyList('p.example.com:1080:plainuser:pw').proxies[0]), false);
 });
