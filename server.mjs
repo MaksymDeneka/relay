@@ -47,9 +47,13 @@ const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const runtimeDir = path.join(DATA_DIR, 'runtime');
 const singbox = new SingBox({ binary: SING_BOX, workDir: runtimeDir, ports, clashSecret: store.data.settings.clashSecret });
 const pf = new PacketFilter({ workDir: runtimeDir });
-// This Mac's own Tailscale name (its dashboards) always goes direct, not via a proxy.
-const directDomains = [...new Set([access.public?.origin && new URL(access.public.origin).hostname, access.tailnet?.host?.split(':')[0], ...(access.directDomains ?? [])].filter(Boolean))];
-const gateway = new Gateway({ store, singbox, pf, ports, isRoot, directDomains });
+// The phone sign-in port on this Mac's own Tailscale name (plus access.directPorts, e.g. another
+// password-protected dashboard) goes direct, not via a proxy.
+const publicUrl = access.public?.origin ? new URL(access.public.origin) : null;
+const dashboards = publicUrl
+  ? { domains: [publicUrl.hostname], ports: [...new Set([Number(publicUrl.port || 443), ...(access.directPorts ?? []).map(Number)])] }
+  : null;
+const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
 const checking = new Set();
 
@@ -232,10 +236,12 @@ async function handleApi(req, res, url) {
     }
     if (method === 'PATCH') {
       const input = await readJson(req);
+      const next = { ...device };
       if (input.name !== undefined || input.ip !== undefined) {
-        Object.assign(device, validateDevice({ name: input.name ?? device.name, ip: input.ip ?? device.ip }, device.id));
+        Object.assign(next, validateDevice({ name: input.name ?? device.name, ip: input.ip ?? device.ip }, device.id));
       }
-      validateTarget(device, input);
+      validateTarget(next, input);
+      Object.assign(device, next);
       store.save();
       return send(res, 200, { device, ...(await applyAndReport()) });
     }
@@ -316,7 +322,9 @@ async function admit(req, res, url, listener) {
     origin = access.public.origin;
     if (host !== new URL(origin).host) return finish(res, 403, 'Invalid dashboard host.');
     req.via = 'phone';
-  } else if (LOCAL_HOSTS.has(host)) {
+  } else if (!access.tailnet?.host && LOCAL_HOSTS.has(host)) {
+    // Only without Tailscale: Serve forwards the client's own Host header, so with Serve in
+    // front, a localhost Host must not skip the owner check.
     origin = `http://${host}`;
     req.via = 'local';
   } else if (access.tailnet?.host && host === access.tailnet.host && req.headers['tailscale-user-login'] === access.tailnet.allowedLogin) {

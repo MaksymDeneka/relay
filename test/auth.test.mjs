@@ -85,6 +85,16 @@ test('server admits the tailnet owner, local requests and signed-in phones only'
       req.on('error', reject);
       req.end(init.body);
     });
+  const post = (p, headers, body, method = 'POST') =>
+    new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: p, method, headers }, (res) => {
+        let data = '';
+        res.on('data', (d) => (data += d));
+        res.on('end', () => resolve({ status: res.statusCode, body: data }));
+      });
+      req.on('error', reject);
+      req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
   try {
     await waitFor(`http://127.0.0.1:${port}/healthz`);
     await waitFor(`http://127.0.0.1:${publicPort}/healthz`);
@@ -94,7 +104,17 @@ test('server admits the tailnet owner, local requests and signed-in phones only'
     assert.equal((await get('/api/state', { host: tailnetHost, 'tailscale-user-login': 'someone@else.com' })).status, 403);
     assert.equal((await get('/api/state', { host: 'evil.example', 'tailscale-user-login': 'owner@example.com' })).status, 403);
     assert.equal((await get('/api/state', { host: tailnetHost, 'tailscale-user-login': 'owner@example.com' })).status, 200);
-    assert.equal((await get('/api/state', { host: `localhost:${port}` })).status, 200);
+    // With Tailscale configured, Serve forwards the client's Host, so localhost gets no bypass.
+    assert.equal((await get('/api/state', { host: `localhost:${port}` })).status, 403);
+    // A rejected edit leaves the device untouched.
+    const owner = { host: tailnetHost, 'tailscale-user-login': 'owner@example.com', 'x-relay': '1', 'content-type': 'application/json' };
+    const created = await post('/api/devices', owner, { name: 'Phone', ip: '192.168.0.201' });
+    assert.equal(created.status, 200);
+    const id = JSON.parse(created.body).device.id;
+    assert.equal((await post(`/api/devices/${id}`, owner, { name: 'Renamed', proxyId: 'missing' }, 'PATCH')).status, 400);
+    const state = JSON.parse((await post('/api/state', owner, undefined, 'GET')).body);
+    assert.equal(state.devices[0].name, 'Phone');
+
     const crossOrigin = await get('/api/apply', { host: tailnetHost, 'tailscale-user-login': 'owner@example.com', origin: 'https://evil.example', 'x-relay': '1' }, port, { method: 'POST' });
     assert.equal(crossOrigin.status, 403);
 

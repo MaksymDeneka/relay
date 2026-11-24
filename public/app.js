@@ -45,7 +45,7 @@ function patchRows(tbody, rows) {
   rows = rows.flat(Infinity).filter(Boolean);
   rows.forEach((row, i) => {
     const old = tbody.rows[i];
-    if (!old || old.cells.length !== row.cells.length || old.className !== row.className) {
+    if (!old || old.dataset.key !== row.dataset.key || old.cells.length !== row.cells.length || old.className !== row.className) {
       old ? old.replaceWith(row) : tbody.append(row);
       return;
     }
@@ -161,7 +161,7 @@ function render() {
 function renderStatus() {
   const s = data.status;
   const mac = macAddress();
-  const routing = s.root && s.singbox.running && s.pf?.loaded && !s.error;
+  const routing = s.root && s.singbox.running && s.pf?.loaded && s.pf?.enabled && !s.error;
   const state = !data.devices.length ? 'Idle' : routing ? 'Routing on' : 'Routing off';
   fill(els.status, h('span', { class: `dot ${routing ? 'on' : ''}` }), [state, mac ? `Mac ${mac.address}` : null].filter(Boolean).join(' · '));
   fill(
@@ -204,7 +204,7 @@ function deviceRow(device) {
 
   return h(
     'tr',
-    {},
+    { 'data-key': device.id },
     h(
       'td',
       {},
@@ -259,7 +259,7 @@ function renderProxies() {
     const check = p.lastCheck;
     return h(
       'tr',
-      {},
+      { 'data-key': p.id },
       h('td', { class: 'pick' }, h('input', { type: 'checkbox', checked: ui.selected.has(p.id) ? 'checked' : null, 'aria-label': `Select ${p.label}`, onchange: (e) => { e.target.checked ? ui.selected.add(p.id) : ui.selected.delete(p.id); renderProxies(); } })),
       h('td', {}, h('span', { class: 'who', text: p.label, title: `${p.type === 'http' ? 'HTTP' : 'SOCKS5'} ${p.host}:${p.port}` }), p.type === 'http' ? h('span', { class: 'm', text: '  HTTP' }) : null),
       h('td', { class: 'exit' }, p.checking ? h('span', { class: 'm', text: 'Checking…' }) : check?.ok ? [h('span', { class: 'mono', text: check.ip }), h('span', { class: 'm', text: `  ${place(check)}` })] : check ? h('span', { class: 'm err', text: check.error }) : h('span', { class: 'm', text: '—' })),
