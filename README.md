@@ -149,6 +149,15 @@ uses. Sessions made this way are removed once no device uses them; imported prox
 Without any `sid-` proxy, the link is **next proxy** instead: the next proxy in the list that no
 other device uses and that hasn't failed its last check.
 
+## IPv6
+
+Relay routes IPv4 only. If the router hands out public IPv6, listed phones can reach the
+internet over IPv6 straight through the router, around the proxy. The dashboard shows a red
+warning when this Mac sees a public IPv6 prefix on the LAN, or when a listed phone has a public
+IPv6 address (matched by MAC through the ARP and NDP tables). Local-only IPv6 (`fd…` addresses,
+for example from a HomePod or Apple TV acting as a Thread border router) is ignored. The fix is
+to turn IPv6 off on the router.
+
 ## Limits
 
 - TCP only. UDP from routed devices is dropped, so QUIC falls back to TCP. Voice and video

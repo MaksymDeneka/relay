@@ -168,6 +168,20 @@ function renderStatus() {
     els.notices,
     !s.root ? h('div', { class: 'notice' }, 'Not running as root, so nothing is routed. Install the service: ', h('code', { text: 'sudo scripts/install.sh' })) : null,
     s.root && s.error ? h('div', { class: 'notice', text: s.error }) : null,
+    ipv6Notice(data.ipv6),
+  );
+}
+
+/** Relay only routes IPv4. Public IPv6 on the network lets listed phones go around it. */
+function ipv6Notice(ipv6) {
+  if (!ipv6?.exposed) return null;
+  const who = ipv6.devices.length ? `${ipv6.devices.map((d) => d.name).join(', ')} ${ipv6.devices.length === 1 ? 'has' : 'have'} a public IPv6 address` : 'Listed phones can get a public IPv6 address';
+  return h(
+    'div',
+    { class: 'notice bad' },
+    h('strong', { text: 'IPv6 internet is on in this network. ' }),
+    `${who}. IPv6 traffic goes straight to the router, around the proxy. Turn off IPv6 on the router (Tenda: More Features → IPv6).`,
+    ipv6.prefixes.length ? h('div', { class: 'm' }, `Prefix: ${ipv6.prefixes.join(', ')}`) : null,
   );
 }
 

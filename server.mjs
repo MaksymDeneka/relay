@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { checkPassword, clearCookie, LoginLimiter, loginPage, readSession, sessionCookie, validSession } from './lib/auth.mjs';
 import { checkDirect, checkProxy, mapLimit } from './lib/check.mjs';
 import { Gateway } from './lib/gateway.mjs';
+import { readIPv6Exposure } from './lib/ipv6.mjs';
 import { isPrivateIPv4, isValidIPv4, lanInterfaces, networkSummary } from './lib/network.mjs';
 import { PacketFilter } from './lib/pf.mjs';
 import { canRotate, parseProxyList, withNewSession } from './lib/proxies.mjs';
@@ -91,6 +92,12 @@ const dashboards = publicUrl
 const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
 const checking = new Set();
+let ipv6 = null;
+async function ipv6Status() {
+  // arp and ndp are cheap, but the dashboard polls; refresh at most every 30 seconds.
+  if (!ipv6 || Date.now() - ipv6.at > 30000) ipv6 = await readIPv6Exposure(store.data.devices);
+  return ipv6;
+}
 const rotating = new Set();
 
 class HttpError extends Error {
@@ -124,11 +131,12 @@ function publicProxy(proxy, devices) {
 
 async function statePayload() {
   const { devices, proxies } = store.data;
-  const [network, pfStatus] = await Promise.all([networkSummary(), isRoot ? pf.status() : null]);
+  const [network, pfStatus, ipv6Exposure] = await Promise.all([networkSummary(), isRoot ? pf.status() : null, ipv6Status()]);
   return {
     devices,
     proxies: proxies.map((p) => publicProxy(p, devices)),
     network,
+    ipv6: ipv6Exposure,
     urls: dashboardUrls(),
     status: {
       root: isRoot,
