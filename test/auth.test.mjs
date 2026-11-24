@@ -146,3 +146,27 @@ test('server admits the tailnet owner, local requests and signed-in phones only'
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a broken access.json locks the dashboard instead of opening localhost', async () => {
+  const cases = ['{ not json', JSON.stringify({ tailnet: { host: 'mac.example.ts.net:1' } })];
+  for (const contents of cases) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-access-'));
+    const port = await freePort();
+    fs.writeFileSync(path.join(dir, 'access.json'), contents);
+    const child = spawn(process.execPath, ['server.mjs'], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent' },
+      stdio: 'ignore',
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${port}/healthz`);
+      for (const headers of [{}, { 'tailscale-user-login': '' }]) {
+        const response = await fetch(`http://127.0.0.1:${port}/api/state`, { headers });
+        assert.equal(response.status, 503, contents);
+      }
+    } finally {
+      child.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});

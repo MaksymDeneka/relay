@@ -185,20 +185,26 @@ function deviceRow(device) {
   const online = (stats?.connections ?? 0) > 0;
   const proxy = device.mode === 'proxy' ? proxyById(device.proxyId) : null;
   const blocked = device.mode === 'block' || (device.mode === 'proxy' && !proxy);
+  // patchRows keeps cells whose markup is unchanged, along with their old handlers, so handlers
+  // look the device up when clicked instead of closing over this render's copy.
+  const act = (fn) => () => {
+    const current = deviceById(device.id);
+    if (current) fn(current);
+  };
 
   let exit;
   if (blocked) exit = h('div', { class: 'm', text: 'No internet' });
-  else if (device.mode === 'direct') exit = [h('div', { class: 'v', text: 'This Mac' }), h('div', { class: 'm' }, h('button', { class: 'link', text: 'check', onclick: () => checkDevice(device) }))];
+  else if (device.mode === 'direct') exit = [h('div', { class: 'v', text: 'This Mac' }), h('div', { class: 'm' }, h('button', { class: 'link', text: 'check', onclick: act(checkDevice) }))];
   else if (proxy.checking) exit = h('div', { class: 'm', text: 'Checking…' });
   else if (proxy.lastCheck?.ok) {
     exit = [
       h('div', { class: 'v mono', text: proxy.lastCheck.ip }),
-      h('div', { class: 'm' }, `${place(proxy.lastCheck)} · ${ago(proxy.lastCheck.at)} · `, h('button', { class: 'link', text: 'check', onclick: () => checkDevice(device) })),
+      h('div', { class: 'm' }, `${place(proxy.lastCheck)} · ${ago(proxy.lastCheck.at)} · `, h('button', { class: 'link', text: 'check', onclick: act(checkDevice) })),
     ];
   } else {
     exit = [
       h('div', { class: 'v err', text: proxy.lastCheck ? 'Not working' : 'Not checked' }),
-      h('div', { class: 'm' }, proxy.lastCheck ? `${proxy.lastCheck.error} · ` : '', h('button', { class: 'link', text: 'check', onclick: () => checkDevice(device) })),
+      h('div', { class: 'm' }, proxy.lastCheck ? `${proxy.lastCheck.error} · ` : '', h('button', { class: 'link', text: 'check', onclick: act(checkDevice) })),
     ];
   }
 
@@ -208,14 +214,14 @@ function deviceRow(device) {
     h(
       'td',
       {},
-      h('button', { class: 'who', text: device.name, title: 'Edit or remove', onclick: () => openDeviceDialog(device) }),
+      h('button', { class: 'who', text: device.name, title: 'Edit or remove', onclick: act(openDeviceDialog) }),
       h('div', { class: 'm' }, h('span', { class: `dot ${online ? 'on' : seen ? 'seen' : ''}` }), `${device.ip} · ${online ? 'online' : seen ? `seen ${ago(seen)}` : 'not seen yet'}`),
     ),
     h(
       'td',
       { 'data-label': 'Route' },
-      h('button', { class: `route${blocked ? ' block' : ''}`, text: routeName(device), onclick: () => openPicker(device) }),
-      device.mode === 'proxy' && data.proxies.length > 1 ? h('div', { class: 'm' }, h('button', { class: 'link', text: 'next proxy', onclick: () => nextProxy(device) })) : null,
+      h('button', { class: `route${blocked ? ' block' : ''}`, text: routeName(device), onclick: act(openPicker) }),
+      device.mode === 'proxy' && data.proxies.length > 1 ? h('div', { class: 'm' }, h('button', { class: 'link', text: 'next proxy', onclick: act(nextProxy) })) : null,
     ),
     h('td', { 'data-label': 'Exit' }, exit),
     h(

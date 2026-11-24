@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test from 'node:test';
-import { checkProxy } from '../lib/check.mjs';
+import { checkProxy, LOOKUP } from '../lib/check.mjs';
+
+// The fake proxy answers the lookup itself, without TLS.
+const lookup = { host: 'lookup.test', port: 443, path: '/json', tls: false };
 
 // A fake HTTP proxy that only supports CONNECT, then answers the lookup itself.
 function fakeConnectProxy({ status = 200 } = {}) {
@@ -23,7 +26,7 @@ function fakeConnectProxy({ status = 200 } = {}) {
         socket.write('HTTP/1.1 200 Connection established\r\n\r\n');
       }
       if (tunnel && buffer.includes('\r\n\r\n')) {
-        const body = JSON.stringify({ status: 'success', query: '203.0.113.9', country: 'Testland', countryCode: 'TL', city: 'Testville', regionName: 'Test', isp: 'Example' });
+        const body = JSON.stringify({ ip: '203.0.113.9', country: 'DE', city: 'Testville', region: 'Test', org: 'AS64500 Example Net' });
         socket.end(`HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
       }
     });
@@ -34,10 +37,10 @@ function fakeConnectProxy({ status = 200 } = {}) {
 test('HTTP proxies are checked through a CONNECT tunnel, like sing-box uses them', async () => {
   const { server, port, seen } = await fakeConnectProxy();
   try {
-    const result = await checkProxy({ type: 'http', host: '127.0.0.1', port, username: 'u', password: 'p' }, { timeoutMs: 5000 });
+    const result = await checkProxy({ type: 'http', host: '127.0.0.1', port, username: 'u', password: 'p' }, { timeoutMs: 5000, lookup });
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.ip, '203.0.113.9');
-    assert.match(seen[0], /^CONNECT ip-api\.com:80 HTTP\/1\.1$/);
+    assert.deepEqual([result.ip, result.country, result.countryCode, result.isp], ['203.0.113.9', 'Germany', 'DE', 'Example Net']);
+    assert.match(seen[0], /^CONNECT lookup\.test:443 HTTP\/1\.1$/);
   } finally {
     server.close();
   }
@@ -46,10 +49,14 @@ test('HTTP proxies are checked through a CONNECT tunnel, like sing-box uses them
 test('a proxy that rejects credentials is reported, not treated as working', async () => {
   const { server, port } = await fakeConnectProxy({ status: 407 });
   try {
-    const result = await checkProxy({ type: 'http', host: '127.0.0.1', port, username: 'u', password: 'bad' }, { timeoutMs: 5000 });
+    const result = await checkProxy({ type: 'http', host: '127.0.0.1', port, username: 'u', password: 'bad' }, { timeoutMs: 5000, lookup });
     assert.equal(result.ok, false);
     assert.match(result.error, /username or password/);
   } finally {
     server.close();
   }
+});
+
+test('the real lookup goes over HTTPS on port 443, which proxies limited to web ports allow', () => {
+  assert.deepEqual([LOOKUP.port, LOOKUP.tls], [443, true]);
 });

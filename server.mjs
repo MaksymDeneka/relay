@@ -22,6 +22,7 @@ const ports = {
   redirect: Number(env.RELAY_REDIRECT_PORT ?? 17890),
   dns: Number(env.RELAY_DNS_PORT ?? 15353),
   clash: Number(env.RELAY_API_PORT ?? 19090),
+  direct: Number(env.RELAY_DIRECT_PORT ?? 17891),
 };
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
@@ -35,14 +36,42 @@ store.load();
  *   public:  { origin, port, passwordFile, username? }   Funnel, password + signed cookie (phones)
  */
 function loadAccess() {
+  let access;
   try {
-    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'access.json'), 'utf8'));
+    access = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'access.json'), 'utf8'));
   } catch (error) {
-    if (error.code !== 'ENOENT') console.error(`data/access.json is unreadable: ${error.message}`);
-    return {};
+    // No file: a fresh install, reachable on localhost only. Any other failure locks the
+    // dashboard rather than falling back to unauthenticated localhost behind Serve.
+    if (error.code === 'ENOENT') return {};
+    return { invalid: `data/access.json is unreadable: ${error.message}` };
   }
+  const problem = accessProblem(access);
+  return problem ? { invalid: `data/access.json: ${problem}` } : access;
+}
+
+function accessProblem(access) {
+  const text = (value) => typeof value === 'string' && value.trim() !== '';
+  const port = (value) => Number.isInteger(value) && value > 0 && value < 65536;
+  if (!access || typeof access !== 'object' || Array.isArray(access)) return 'expected an object.';
+  if (access.tailnet !== undefined && !(text(access.tailnet?.host) && text(access.tailnet?.allowedLogin))) {
+    return 'tailnet needs both host and allowedLogin.';
+  }
+  if (access.public !== undefined) {
+    let origin = null;
+    try {
+      origin = new URL(access.public?.origin);
+    } catch {}
+    if (origin?.protocol !== 'https:' || !port(access.public.port) || !text(access.public.passwordFile)) {
+      return 'public needs an https origin, a port and a passwordFile.';
+    }
+  }
+  if (access.directPorts !== undefined && !(Array.isArray(access.directPorts) && access.directPorts.every(port))) {
+    return 'directPorts must be a list of port numbers.';
+  }
+  return null;
 }
 const access = loadAccess();
+if (access.invalid) console.error(`${access.invalid} The dashboard refuses all requests until it is fixed.`);
 const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const runtimeDir = path.join(DATA_DIR, 'runtime');
 const singbox = new SingBox({ binary: SING_BOX, workDir: runtimeDir, ports, clashSecret: store.data.settings.clashSecret });
@@ -51,7 +80,7 @@ const pf = new PacketFilter({ workDir: runtimeDir });
 // password-protected dashboard) goes direct, not via a proxy.
 const publicUrl = access.public?.origin ? new URL(access.public.origin) : null;
 const dashboards = publicUrl
-  ? { domains: [publicUrl.hostname], ports: [...new Set([Number(publicUrl.port || 443), ...(access.directPorts ?? []).map(Number)])] }
+  ? { domains: [publicUrl.hostname], ports: [...new Set([Number(publicUrl.port || 443), ...(access.directPorts ?? [])])] }
   : null;
 const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
@@ -318,6 +347,7 @@ async function readForm(req) {
 async function admit(req, res, url, listener) {
   const host = req.headers.host ?? '';
   let origin;
+  if (access.invalid) return finish(res, 503, `${access.invalid} Fix it, then restart Relay.`);
   if (listener === 'public') {
     origin = access.public.origin;
     if (host !== new URL(origin).host) return finish(res, 403, 'Invalid dashboard host.');

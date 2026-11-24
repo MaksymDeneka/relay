@@ -23,11 +23,14 @@ iPhone ──(router = this Mac)──▶ pf rdr ──▶ sing-box ──▶ SO
 - Modes per device: **Proxy** (chosen proxy), **Direct** (this Mac's own connection),
   **Block** (no internet). If a device's proxy is deleted, the device is blocked, not leaked.
   Direct mode resolves names on the Mac and refuses loopback and tailnet addresses, so a device
-  can't reach services that only listen on this Mac.
+  can't reach services that only listen on this Mac. It is a selector choice like a proxy (a
+  hop through a loopback SOCKS listener, port 17891, where that check runs), so switching any
+  device between Proxy, Direct and Block takes effect without restarting sing-box.
 - DNS from devices gets fake-IP answers for A records only; other query types are refused.
 - When the service stops, the anchor keeps only the block rules, so devices that still use this
   Mac as their router get no internet instead of being forwarded unproxied (macOS may have IP
-  forwarding on for other reasons). `scripts/uninstall.sh` removes the rules.
+  forwarding on for other reasons). `scripts/uninstall.sh` removes the rules and releases
+  Relay's pf enable reference.
 - While any device is configured, the service holds a `caffeinate -i` assertion so the Mac
   doesn't idle-sleep. If the Mac is off, the listed phones have no internet until they switch
   back to Automatic.
@@ -76,7 +79,8 @@ password for both. Sign-ins are capped at 5 per minute. To sign out every phone,
 
 Without `access.json`, only `http://localhost:8787` works. With it, every request on port 8787
 needs the Tailscale owner identity, including ones with a `localhost` Host header (Serve passes
-the client's Host through).
+the client's Host through). If `access.json` can't be read or is incomplete (for example a
+`tailnet` entry without `allowedLogin`), the dashboard refuses every request until it is fixed.
 
 Make a password file:
 
@@ -132,7 +136,8 @@ http://user:pass@host:port
 ```
 
 Labels come from `sid-NNN` in the username, and the flag from `country-xx`. **Check** looks up
-each proxy's exit IP, location and latency through the proxy itself. **next proxy** under a device's
+each proxy's exit IP, location and latency through the proxy itself (HTTPS to ipinfo.io on port
+443, which proxies limited to web ports allow). **next proxy** under a device's
 route switches to the next proxy in the list that no other device uses and that hasn't failed
 its last check.
 
