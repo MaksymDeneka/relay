@@ -75,6 +75,10 @@ function accessProblem(access) {
 const access = loadAccess();
 if (access.invalid) console.error(`${access.invalid} The dashboard refuses all requests until it is fixed.`);
 const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+// Unauthenticated localhost access is opt-in, for a Mac without Tailscale or for development.
+const LOCAL_DASHBOARD = env.RELAY_LOCAL_DASHBOARD === '1';
+const FORWARD_HEADERS = ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'tailscale-user-login', 'tailscale-user-name'];
+const forwarded = (req) => FORWARD_HEADERS.some((name) => req.headers[name] !== undefined);
 const runtimeDir = path.join(DATA_DIR, 'runtime');
 const singbox = new SingBox({ binary: SING_BOX, workDir: runtimeDir, ports, clashSecret: store.data.settings.clashSecret });
 const pf = new PacketFilter({ workDir: runtimeDir });
@@ -354,11 +358,13 @@ async function admit(req, res, url, listener) {
     origin = access.public.origin;
     if (host !== new URL(origin).host) return finish(res, 403, 'Invalid dashboard host.');
     req.via = 'phone';
-  } else if (!access.tailnet?.host && LOCAL_HOSTS.has(host)) {
-    // Only without Tailscale: Serve forwards the client's own Host header, so with Serve in
-    // front, a localhost Host must not skip the owner check.
+  } else if (!access.tailnet && LOCAL_DASHBOARD && LOCAL_HOSTS.has(host) && !forwarded(req)) {
+    // Opt-in and only without Tailscale settings. Serve passes the client's own Host header
+    // through, so a forwarded request with a localhost Host must not count as local.
     origin = `http://${host}`;
     req.via = 'local';
+  } else if (!access.tailnet) {
+    return finish(res, 403, 'Create data/access.json (see README), or start Relay with RELAY_LOCAL_DASHBOARD=1 for a localhost-only dashboard.');
   } else if (access.tailnet?.host && host === access.tailnet.host && req.headers['tailscale-user-login'] === access.tailnet.allowedLogin) {
     // Tailscale Serve sets this header for tailnet users and strips it from Funnel and client requests.
     origin = `https://${host}`;

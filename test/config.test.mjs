@@ -99,17 +99,18 @@ test('sing-box accepts the generated config', { skip: !fs.existsSync('/opt/homeb
   }
 });
 
-test('pf rules only touch listed devices', () => {
-  const rules = renderRules({ interfaces: ['en0', 'en7'], deviceIps: ['192.168.0.201'], ports });
+test('pf rules only touch listed devices, on every interface', () => {
+  const rules = renderRules({ deviceIps: ['192.168.0.201'], ports });
   assert.match(rules, /table <relay_devices> const \{ 192\.168\.0\.201 \}/);
-  assert.match(rules, /rdr pass on \{ en0 en7 \} inet proto tcp from <relay_devices> to ! <relay_local> -> 127\.0\.0\.1 port 17890/);
+  assert.match(rules, /^rdr pass inet proto tcp from <relay_devices> to ! <relay_local> -> 127\.0\.0\.1 port 17890$/m);
   assert.match(rules, /port 53 -> 127\.0\.0\.1 port 15353/);
-  assert.match(rules, /block drop in quick on \{ en0 en7 \} inet from <relay_devices> to ! <relay_local>/);
-  assert.match(rules, /block drop in quick on \{ en0 en7 \} inet from <relay_devices> to \{ 127\.0\.0\.0\/8 100\.64\.0\.0\/10 \}/);
+  assert.match(rules, /^block drop in quick inet from <relay_devices> to ! <relay_local>$/m);
+  assert.match(rules, /^block drop in quick inet from <relay_devices> to \{ 127\.0\.0\.0\/8 100\.64\.0\.0\/10 \}$/m);
+  assert.doesNotMatch(rules, / on /);
 });
 
 test('block-only rules keep devices offline while the service is stopped', () => {
-  const rules = renderRules({ interfaces: ['en0'], deviceIps: ['192.168.0.201'], ports, blockOnly: true });
+  const rules = renderRules({ deviceIps: ['192.168.0.201'], ports, blockOnly: true });
   assert.doesNotMatch(rules, /rdr/);
-  assert.match(rules, /block drop in quick on \{ en0 \} inet from <relay_devices> to ! <relay_local>/);
+  assert.match(rules, /^block drop in quick inet from <relay_devices> to ! <relay_local>$/m);
 });

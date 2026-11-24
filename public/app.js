@@ -42,7 +42,7 @@ function fill(el, ...children) {
  * every few seconds; replacing whole rows would swallow taps that land during a refresh.
  */
 function patchRows(tbody, rows) {
-  rows = rows.flat(Infinity).filter(Boolean);
+  rows = [rows].flat(Infinity).filter(Boolean);
   rows.forEach((row, i) => {
     const old = tbody.rows[i];
     if (!old || old.dataset.key !== row.dataset.key || old.cells.length !== row.cells.length || old.className !== row.className) {

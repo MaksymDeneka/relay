@@ -170,3 +170,25 @@ test('a broken access.json locks the dashboard instead of opening localhost', as
     }
   }
 });
+
+test('without access.json, localhost needs an explicit opt-in and never accepts forwarded requests', async () => {
+  for (const optIn of [false, true]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-local-'));
+    const port = await freePort();
+    const child = spawn(process.execPath, ['server.mjs'], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOCAL_DASHBOARD: optIn ? '1' : '' },
+      stdio: 'ignore',
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${port}/healthz`);
+      assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`)).status, optIn ? 200 : 403);
+      for (const headers of [{ 'x-forwarded-for': '100.64.0.9' }, { 'tailscale-user-login': 'someone@example.com' }, { forwarded: 'for=100.64.0.9' }]) {
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`, { headers })).status, 403);
+      }
+    } finally {
+      child.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});

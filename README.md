@@ -53,7 +53,7 @@ The dashboard listens on loopback only, never on the LAN; Tailscale is the way i
 |---|---|---|
 | Your Mac (tailnet) | `https://<mac>.<tailnet>.ts.net:8787` | none: Tailscale Serve sends `Tailscale-User-Login`, which must be the owner |
 | Phones (Funnel) | `https://<mac>.<tailnet>.ts.net:10000` | a password, then a signed `__Host-` cookie for 30 days |
-| This Mac, only without `access.json` | `http://localhost:8787` | none |
+| This Mac, only without `access.json` and with `RELAY_LOCAL_DASHBOARD=1` | `http://localhost:8787` | none |
 
 Create `data/access.json`:
 
@@ -77,7 +77,9 @@ the one another dashboard on the same host uses, and password managers offer the
 password for both. Sign-ins are capped at 5 per minute. To sign out every phone, delete
 `settings.sessionSecret` from `data/state.json` and restart the service.
 
-Without `access.json`, only `http://localhost:8787` works. Once the file exists, its `tailnet`
+Without `access.json`, the dashboard refuses every request unless Relay was started with
+`RELAY_LOCAL_DASHBOARD=1`; then `http://localhost:8787` works without a sign-in, but never for
+requests forwarded by a proxy such as Tailscale Serve. Once the file exists, its `tailnet`
 block is required. With it, every request on port 8787
 needs the Tailscale owner identity, including ones with a `localhost` Host header (Serve passes
 the client's Host through). If `access.json` can't be read or is incomplete (for example a
