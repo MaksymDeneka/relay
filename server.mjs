@@ -92,13 +92,13 @@ const dashboards = publicUrl
 const gateway = new Gateway({ store, singbox, pf, ports, isRoot, dashboards });
 const limiter = new LoginLimiter();
 const checking = new Set();
-let ipv6 = null;
+let ipv6 = { key: null, value: null };
 async function ipv6Status() {
   // arp and ndp are cheap, but the dashboard polls; refresh at most every 30 seconds, and at
   // once when the device list changes.
   const key = JSON.stringify(store.data.devices.map((d) => [d.id, d.ip, d.name]));
-  if (!ipv6 || ipv6.key !== key || Date.now() - ipv6.at > 30000) ipv6 = { ...(await readIPv6Exposure(store.data.devices)), key };
-  return ipv6;
+  if (ipv6.key !== key || !ipv6.value || Date.now() - ipv6.value.at > 30000) ipv6 = { key, value: await readIPv6Exposure(store.data.devices) };
+  return ipv6.value;
 }
 const rotating = new Set();
 
