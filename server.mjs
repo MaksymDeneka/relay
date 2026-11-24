@@ -224,34 +224,41 @@ function retire(proxyId) {
   }
 }
 
+/** Exit IPs of the proxies devices point at right now. */
+function exitsInUse() {
+  const inUse = new Set(store.data.devices.map((d) => d.proxyId));
+  return new Set(store.data.proxies.filter((p) => inUse.has(p.id)).map((p) => p.lastCheck?.ip).filter(Boolean));
+}
+
 /**
  * Give a device a fresh session of its proxy (or of the first proxy with a session id): a new
- * exit IP. The new session is checked first, and must not exit where this device or another
- * listed device already does.
+ * exit IP. The new session is checked first, and must not exit where a listed device already
+ * does. If the device's route changed while the check ran, the user's newer choice wins.
  */
 async function rotateDevice(device) {
   const current = store.data.proxies.find((p) => p.id === device.proxyId);
   const template = canRotate(current) ? current : store.data.proxies.find(canRotate);
-  if (!template) throw new HttpError(400, 'New proxy needs a proxy with sid-… in its username. Import one first.');
+  if (!template) throw new HttpError(400, 'New proxy needs a proxy with sid-NNN in its username. Import one first.');
   if (rotating.has(device.id)) throw new HttpError(409, 'Already getting a new proxy for this device.');
   rotating.add(device.id);
+  const route = `${device.mode}:${device.proxyId}`;
   try {
-    const inUse = new Set(store.data.devices.map((d) => d.proxyId));
-    const avoid = new Set(store.data.proxies.filter((p) => inUse.has(p.id)).map((p) => p.lastCheck?.ip).filter(Boolean));
     let failure = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       const candidate = withNewSession(template);
       if (store.data.proxies.some((p) => p.id === candidate.id)) continue;
       const result = await checkProxy(candidate, { timeoutMs: 10000 });
+      // Everything below runs without awaiting, so no other request can interleave with it.
+      if (!store.data.devices.includes(device)) throw new HttpError(404, 'Device not found.');
+      if (`${device.mode}:${device.proxyId}` !== route) throw new HttpError(409, 'The route changed while getting a new proxy, so it was kept.');
       if (!result.ok) {
         failure = `the new session did not work: ${result.error}`;
         continue;
       }
-      if (avoid.has(result.ip)) {
+      if (exitsInUse().has(result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
         failure = 'the provider kept giving an exit IP already in use';
         continue;
       }
-      if (!store.data.devices.includes(device)) throw new HttpError(404, 'Device not found.');
       const proxy = { ...candidate, rotated: true, addedAt: Date.now(), lastCheck: result };
       const previous = device.proxyId;
       store.data.proxies.push(proxy);
@@ -322,8 +329,9 @@ async function handleApi(req, res, url) {
   if (deviceMatch) {
     const device = store.data.devices.find((d) => d.id === deviceMatch[1]);
     if (!device) throw new HttpError(404, 'Device not found.');
-    if (deviceMatch[2] === '/rotate' && method === 'POST') return send(res, 200, await rotateDevice(device));
-    if (deviceMatch[2] === '/check' && method === 'POST') {
+    if (deviceMatch[2] && method !== 'POST') throw new HttpError(405, 'Method not allowed');
+    if (deviceMatch[2] === '/rotate') return send(res, 200, await rotateDevice(device));
+    if (deviceMatch[2] === '/check') {
       if (device.mode === 'direct') return send(res, 200, { result: await checkDirect() });
       if (device.mode === 'block') return send(res, 200, { result: { ok: false, error: 'This device is blocked.' } });
       const proxy = store.data.proxies.find((p) => p.id === device.proxyId);

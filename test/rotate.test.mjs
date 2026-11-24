@@ -8,7 +8,7 @@ import test from 'node:test';
 
 // A fake HTTP CONNECT proxy whose exit IP follows the session number in the username, like
 // residential providers do. Sessions in `dead` fail the lookup.
-function fakeProvider({ dead = new Set() } = {}) {
+function fakeProvider({ dead = new Set(), delayMs = 0 } = {}) {
   const server = net.createServer((socket) => {
     let buffer = '';
     let sid = null;
@@ -25,7 +25,7 @@ function fakeProvider({ dead = new Set() } = {}) {
       if (sid !== null && buffer.includes('\r\n\r\n')) {
         const ip = `203.0.${Number(sid) % 250}.${Math.floor(Number(sid) / 250) % 250}`;
         const body = JSON.stringify({ ip, country: 'US', city: 'Testville', region: 'Test', org: 'AS64500 Example' });
-        socket.end(`HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+        setTimeout(() => socket.end(`HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n${body}`), delayMs);
       }
     });
   });
@@ -118,6 +118,49 @@ test('New proxy needs a proxy with a session id', async () => {
     assert.match(result.body.error, /sid-/);
   } finally {
     child.kill();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a route change during the check wins over the pending new proxy', async () => {
+  const provider = await fakeProvider({ delayMs: 400 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-rotate-'));
+  const port = await freePort();
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: path.resolve(import.meta.dirname, '..'),
+    env: { ...process.env, RELAY_DATA: dir, RELAY_PORT: String(port), RELAY_SING_BOX: '/nonexistent', RELAY_LOOKUP: 'http://lookup.test/json', RELAY_LOCAL_DASHBOARD: '1' },
+    stdio: 'ignore',
+  });
+  const api = async (method, p, body) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api${p}`, { method, headers: { 'X-Relay': '1', 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    for (let i = 0; i < 100; i++) {
+      try {
+        await fetch(`http://127.0.0.1:${port}/healthz`);
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    await api('POST', '/proxies/import', { text: `http\t127.0.0.1:${provider.port}:user-sid-1000-ttl-60:pw` });
+    const original = (await api('GET', '/state')).body.proxies[0];
+    const { body: added } = await api('POST', '/devices', { name: 'Phone', ip: '192.168.250.79', proxyId: original.id });
+    const pending = api('POST', `/devices/${added.device.id}/rotate`);
+    await new Promise((r) => setTimeout(r, 100));
+    await api('PATCH', `/devices/${added.device.id}`, { mode: 'block' });
+    const result = await pending;
+    assert.equal(result.status, 409);
+    const state = (await api('GET', '/state')).body;
+    assert.equal(state.devices[0].mode, 'block');
+    assert.deepEqual(state.proxies.map((p) => p.id), [original.id]);
+    // Actions only take POST; DELETE on one must not remove the device.
+    assert.equal((await api('DELETE', `/devices/${added.device.id}/rotate`)).status, 405);
+    assert.equal((await api('GET', '/state')).body.devices.length, 1);
+  } finally {
+    child.kill();
+    provider.server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

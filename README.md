@@ -18,7 +18,9 @@ iPhone ──(router = this Mac)──▶ pf rdr ──▶ sing-box ──▶ SO
   to the internet (UDP, ICMP) is dropped, so nothing bypasses the proxy.
 - **sing-box** answers DNS with fake IPs (198.18.0.0/15), so each proxy receives the real
   domain name and resolves it on its side. Every device has its own selector, so switching one
-  device takes effect immediately and doesn't drop other devices' connections.
+  device between existing proxies, Direct and Block takes effect immediately and doesn't drop
+  other devices' connections. Adding or removing a device or a proxy, including **new proxy**,
+  restarts sing-box, so every device reconnects once.
 - Relay doesn't need or enable IP forwarding, and the Mac's own traffic is never touched.
 - Modes per device: **Proxy** (chosen proxy), **Direct** (this Mac's own connection),
   **Block** (no internet). If a device's proxy is deleted, the device is blocked, not leaked.
@@ -143,9 +145,11 @@ each proxy's exit IP, location and latency through the proxy itself (HTTPS to ip
 443, which proxies limited to web ports allow).
 
 **new proxy** under a device's route gives it a fresh exit IP in one tap. Relay copies the
-device's proxy (or the first proxy with `sid-NNN` in its username) with a new random session
-number, checks it, and switches the device only if it works and exits on an IP no listed device
+device's proxy (or the first proxy with a numeric `sid-NNN` in its username) with a new random
+session number, checks it, and switches the device only if it works and exits on an IP no listed device
 uses. Sessions made this way are removed once no device uses them; imported proxies stay.
+Adding the new session restarts sing-box, so every phone reconnects once. If you change the
+device's route while the new session is being checked, your change wins.
 Without any `sid-` proxy, the link is **next proxy** instead: the next proxy in the list that no
 other device uses and that hasn't failed its last check.
 
@@ -154,7 +158,8 @@ other device uses and that hasn't failed its last check.
 Relay routes IPv4 only. If the router hands out public IPv6, listed phones can reach the
 internet over IPv6 straight through the router, around the proxy. The dashboard shows a red
 warning when this Mac sees a public IPv6 prefix on the LAN, or when a listed phone has a public
-IPv6 address (matched by MAC through the ARP and NDP tables). Local-only IPv6 (`fd…` addresses,
+IPv6 address (matched by MAC through the ARP and NDP tables). Only interfaces that serve listed
+devices count. Local-only IPv6 (`fd…` addresses,
 for example from a HomePod or Apple TV acting as a Thread border router) is ignored. The fix is
 to turn IPv6 off on the router.
 

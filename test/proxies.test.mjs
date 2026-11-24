@@ -52,4 +52,9 @@ test('a new session keeps everything but the session number', () => {
   assert.notEqual(fresh.id, original.id);
   assert.notEqual(withNewSession(original).username, original.username);
   assert.equal(canRotate(parseProxyList('p.example.com:1080:plainuser:pw').proxies[0]), false);
+  // Only a whole numeric sid token is a session; ordinary names are never rewritten.
+  for (const username of ['corp-session-support', 'team-sid-abc', 'sidney-1234', 'x-sid-12ab-ttl-60']) {
+    assert.equal(canRotate({ username }), false, username);
+  }
+  assert.equal(canRotate({ username: 'sid-42' }), true);
 });

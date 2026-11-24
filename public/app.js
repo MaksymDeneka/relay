@@ -174,6 +174,9 @@ function renderStatus() {
 
 /** Relay only routes IPv4. Public IPv6 on the network lets listed phones go around it. */
 function ipv6Notice(ipv6) {
+  if (ipv6 && !ipv6.available && data.status.root && data.devices.length) {
+    return h('div', { class: 'notice', text: 'Could not check this network for public IPv6 (the ARP and NDP tables were unreadable).' });
+  }
   if (!ipv6?.exposed) return null;
   const who = ipv6.devices.length ? `${ipv6.devices.map((d) => d.name).join(', ')} ${ipv6.devices.length === 1 ? 'has' : 'have'} a public IPv6 address` : 'Listed phones can get a public IPv6 address';
   return h(
@@ -181,7 +184,7 @@ function ipv6Notice(ipv6) {
     { class: 'notice bad' },
     h('strong', { text: 'IPv6 internet is on in this network. ' }),
     `${who}. IPv6 traffic goes straight to the router, around the proxy. Turn off IPv6 on the router (Tenda: More Features → IPv6).`,
-    ipv6.prefixes.length ? h('div', { class: 'm' }, `Prefix: ${ipv6.prefixes.join(', ')}`) : null,
+    ipv6.prefixes.length ? h('div', { class: 'm' }, `Seen: ${ipv6.prefixes.join(', ')}`) : null,
   );
 }
 
@@ -236,7 +239,7 @@ function deviceRow(device) {
       { 'data-label': 'Route' },
       h('button', { class: `route${blocked ? ' block' : ''}`, text: routeName(device), onclick: act(openPicker) }),
       data.proxies.some((p) => p.rotatable)
-        ? h('div', { class: 'm' }, h('button', { class: 'link', text: ui.rotating.has(device.id) ? 'getting new proxy…' : 'new proxy', disabled: ui.rotating.has(device.id), onclick: act(newProxy) }))
+        ? h('div', { class: 'm' }, h('button', { class: 'link', text: ui.rotating.has(device.id) ? 'getting new proxy…' : 'new proxy', title: 'New exit IP. Every phone reconnects for a moment.', disabled: ui.rotating.has(device.id), onclick: act(newProxy) }))
         : device.mode === 'proxy' && data.proxies.length > 1
           ? h('div', { class: 'm' }, h('button', { class: 'link', text: 'next proxy', onclick: act(nextProxy) }))
           : null,
