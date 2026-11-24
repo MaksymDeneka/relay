@@ -174,10 +174,12 @@ function renderStatus() {
 
 /** Relay only routes IPv4. Public IPv6 on the network lets listed phones go around it. */
 function ipv6Notice(ipv6) {
-  if (ipv6 && !ipv6.available && data.status.root && data.devices.length) {
-    return h('div', { class: 'notice', text: 'Could not check this network for public IPv6 (the ARP and NDP tables were unreadable).' });
+  if (!ipv6?.exposed) {
+    if (ipv6 && !ipv6.available && data.status.root && data.devices.length) {
+      return h('div', { class: 'notice', text: 'Could not check this network for public IPv6 (the ARP and NDP tables were unreadable).' });
+    }
+    return null;
   }
-  if (!ipv6?.exposed) return null;
   const who = ipv6.devices.length ? `${ipv6.devices.map((d) => d.name).join(', ')} ${ipv6.devices.length === 1 ? 'has' : 'have'} a public IPv6 address` : 'Listed phones can get a public IPv6 address';
   return h(
     'div',

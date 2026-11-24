@@ -86,6 +86,13 @@ test('New proxy gives a device a fresh, checked session and retires the one it m
     // Moving the phone back to the imported proxy retires the fresh session too.
     await api('PATCH', `/devices/${added.device.id}`, { proxyId: original.id });
     assert.deepEqual((await api('GET', '/state')).body.proxies.map((p) => p.id), [original.id]);
+
+    // So does switching a phone on a fresh session to Direct.
+    await api('POST', `/devices/${added.device.id}/rotate`);
+    await api('PATCH', `/devices/${added.device.id}`, { mode: 'direct' });
+    const after = (await api('GET', '/state')).body;
+    assert.deepEqual(after.proxies.map((p) => p.id), [original.id]);
+    assert.deepEqual([after.devices[0].mode, after.devices[0].proxyId], ['direct', null]);
   } finally {
     child.kill();
     provider.server.close();
@@ -149,11 +156,13 @@ test('a route change during the check wins over the pending new proxy', async ()
     const { body: added } = await api('POST', '/devices', { name: 'Phone', ip: '192.168.250.79', proxyId: original.id });
     const pending = api('POST', `/devices/${added.device.id}/rotate`);
     await new Promise((r) => setTimeout(r, 100));
+    // Block and back again: the route looks the same, but the newer choice still wins.
     await api('PATCH', `/devices/${added.device.id}`, { mode: 'block' });
+    await api('PATCH', `/devices/${added.device.id}`, { mode: 'proxy', proxyId: original.id });
     const result = await pending;
     assert.equal(result.status, 409);
     const state = (await api('GET', '/state')).body;
-    assert.equal(state.devices[0].mode, 'block');
+    assert.deepEqual([state.devices[0].mode, state.devices[0].proxyId], ['proxy', original.id]);
     assert.deepEqual(state.proxies.map((p) => p.id), [original.id]);
     // Actions only take POST; DELETE on one must not remove the device.
     assert.equal((await api('DELETE', `/devices/${added.device.id}/rotate`)).status, 405);

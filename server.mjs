@@ -94,8 +94,10 @@ const limiter = new LoginLimiter();
 const checking = new Set();
 let ipv6 = null;
 async function ipv6Status() {
-  // arp and ndp are cheap, but the dashboard polls; refresh at most every 30 seconds.
-  if (!ipv6 || Date.now() - ipv6.at > 30000) ipv6 = await readIPv6Exposure(store.data.devices);
+  // arp and ndp are cheap, but the dashboard polls; refresh at most every 30 seconds, and at
+  // once when the device list changes.
+  const key = JSON.stringify(store.data.devices.map((d) => [d.id, d.ip, d.name]));
+  if (!ipv6 || ipv6.key !== key || Date.now() - ipv6.at > 30000) ipv6 = { ...(await readIPv6Exposure(store.data.devices)), key };
   return ipv6;
 }
 const rotating = new Set();
@@ -224,16 +226,16 @@ function retire(proxyId) {
   }
 }
 
-/** Exit IPs of the proxies devices point at right now. */
-function exitsInUse() {
-  const inUse = new Set(store.data.devices.map((d) => d.proxyId));
-  return new Set(store.data.proxies.filter((p) => inUse.has(p.id)).map((p) => p.lastCheck?.ip).filter(Boolean));
+/** Proxies that other devices route through right now. */
+function activeProxies(except) {
+  const ids = new Set(store.data.devices.filter((d) => d !== except && d.mode === 'proxy').map((d) => d.proxyId));
+  return store.data.proxies.filter((p) => ids.has(p.id));
 }
 
 /**
  * Give a device a fresh session of its proxy (or of the first proxy with a session id): a new
- * exit IP. The new session is checked first, and must not exit where a listed device already
- * does. If the device's route changed while the check ran, the user's newer choice wins.
+ * exit IP. The new session is checked first, and must not exit where another device's proxy
+ * does. If the device changed while the check ran, the user's newer choice wins.
  */
 async function rotateDevice(device) {
   const current = store.data.proxies.find((p) => p.id === device.proxyId);
@@ -241,8 +243,11 @@ async function rotateDevice(device) {
   if (!template) throw new HttpError(400, 'New proxy needs a proxy with sid-NNN in its username. Import one first.');
   if (rotating.has(device.id)) throw new HttpError(409, 'Already getting a new proxy for this device.');
   rotating.add(device.id);
-  const route = `${device.mode}:${device.proxyId}`;
+  const rev = device.rev ?? 0;
   try {
+    // Other devices' exits must be known and recent to compare against; sticky sessions can
+    // move to another IP over time.
+    await runChecks(activeProxies(device).filter((p) => !p.lastCheck || Date.now() - p.lastCheck.at > 10 * 60 * 1000));
     let failure = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       const candidate = withNewSession(template);
@@ -250,12 +255,14 @@ async function rotateDevice(device) {
       const result = await checkProxy(candidate, { timeoutMs: 10000 });
       // Everything below runs without awaiting, so no other request can interleave with it.
       if (!store.data.devices.includes(device)) throw new HttpError(404, 'Device not found.');
-      if (`${device.mode}:${device.proxyId}` !== route) throw new HttpError(409, 'The route changed while getting a new proxy, so it was kept.');
+      if ((device.rev ?? 0) !== rev) throw new HttpError(409, 'The device changed while getting a new proxy, so your change was kept.');
       if (!result.ok) {
         failure = `the new session did not work: ${result.error}`;
         continue;
       }
-      if (exitsInUse().has(result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
+      const others = activeProxies(device);
+      if (others.some((p) => !p.lastCheck)) throw new HttpError(409, 'Another device’s proxy is still being checked. Try again in a moment.');
+      if (others.some((p) => p.lastCheck.ok && p.lastCheck.ip === result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
         failure = 'the provider kept giving an exit IP already in use';
         continue;
       }
@@ -264,6 +271,7 @@ async function rotateDevice(device) {
       store.data.proxies.push(proxy);
       device.mode = 'proxy';
       device.proxyId = proxy.id;
+      device.rev = rev + 1;
       retire(previous);
       store.save();
       return { device, proxy: publicProxy(proxy, store.data.devices), ...(await applyAndReport()) };
@@ -346,6 +354,9 @@ async function handleApi(req, res, url) {
         Object.assign(next, validateDevice({ name: input.name ?? device.name, ip: input.ip ?? device.ip }, device.id));
       }
       validateTarget(next, input);
+      // A session made by New proxy belongs to its route: leaving Proxy mode lets it go.
+      if (next.mode !== 'proxy' && store.data.proxies.find((p) => p.id === next.proxyId)?.rotated) next.proxyId = null;
+      next.rev = (device.rev ?? 0) + 1;
       const previous = device.proxyId;
       Object.assign(device, next);
       if (previous !== device.proxyId) retire(previous);

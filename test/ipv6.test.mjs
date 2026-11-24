@@ -52,3 +52,11 @@ test('public IPv6 on an interface that serves no listed device is ignored', () =
   const prefixes = parsePrefixes('2a02:2378:1:2::/64 if=en0');
   assert.equal(ipv6Exposure({ interfaces, arp, ndp: [], prefixes, devices }).exposed, false);
 });
+
+test('a public prefix on another interface in the same subnet is ignored once ARP places the phone', () => {
+  const interfaces = { en7: [lan], en0: [{ family: 'IPv4', address: '192.168.0.198', netmask: '255.255.255.0' }, { family: 'IPv6', address: '2a02:2378:1:2::9', netmask: 'ffff:ffff:ffff:ffff::' }] };
+  // iPhone 1 is in ARP on en7; iPhone 2 is not, so the subnet fallback applies to it alone.
+  const onlyPlaced = [devices[0]];
+  assert.equal(ipv6Exposure({ interfaces, arp, ndp: [], devices: onlyPlaced }).exposed, false);
+  assert.equal(ipv6Exposure({ interfaces, arp, ndp: [], devices }).exposed, true);
+});

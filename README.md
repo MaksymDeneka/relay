@@ -19,8 +19,9 @@ iPhone ──(router = this Mac)──▶ pf rdr ──▶ sing-box ──▶ SO
 - **sing-box** answers DNS with fake IPs (198.18.0.0/15), so each proxy receives the real
   domain name and resolves it on its side. Every device has its own selector, so switching one
   device between existing proxies, Direct and Block takes effect immediately and doesn't drop
-  other devices' connections. Adding or removing a device or a proxy, including **new proxy**,
-  restarts sing-box, so every device reconnects once.
+  other devices' connections. Adding or removing a device or a proxy restarts sing-box, so
+  every device reconnects once. That includes **new proxy**, and moving a device off a session
+  **new proxy** made (the session is removed then).
 - Relay doesn't need or enable IP forwarding, and the Mac's own traffic is never touched.
 - Modes per device: **Proxy** (chosen proxy), **Direct** (this Mac's own connection),
   **Block** (no internet). If a device's proxy is deleted, the device is blocked, not leaked.
