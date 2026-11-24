@@ -260,9 +260,15 @@ async function rotateDevice(device) {
         failure = `the new session did not work: ${result.error}`;
         continue;
       }
+      // Other devices' exits must be known and recent, or the comparison means nothing.
       const others = activeProxies(device);
-      if (others.some((p) => !p.lastCheck)) throw new HttpError(409, 'Another device’s proxy is still being checked. Try again in a moment.');
-      if (others.some((p) => p.lastCheck.ok && p.lastCheck.ip === result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
+      if (others.some((p) => checking.has(p.id) || !p.lastCheck || Date.now() - p.lastCheck.at > 15 * 60 * 1000)) {
+        throw new HttpError(409, 'Another device’s proxy is still being checked. Try again in a moment.');
+      }
+      // The point is a new IP: the device's own current exit counts as taken too.
+      const taken = new Set(others.filter((p) => p.lastCheck.ok).map((p) => p.lastCheck.ip));
+      if (device.mode === 'proxy' && current?.lastCheck?.ok) taken.add(current.lastCheck.ip);
+      if (taken.has(result.ip) || store.data.proxies.some((p) => p.id === candidate.id)) {
         failure = 'the provider kept giving an exit IP already in use';
         continue;
       }
@@ -399,6 +405,7 @@ async function handleApi(req, res, url) {
     for (const device of store.data.devices) {
       if (device.proxyId && remove.has(device.proxyId)) {
         device.proxyId = null;
+        device.rev = (device.rev ?? 0) + 1;
         if (device.mode === 'proxy') device.mode = 'block';
         affected.push(device.name);
       }

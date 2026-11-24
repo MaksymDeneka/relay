@@ -28,7 +28,9 @@ iPhone ──(router = this Mac)──▶ pf rdr ──▶ sing-box ──▶ SO
   Direct mode resolves names on the Mac and refuses loopback and tailnet addresses, so a device
   can't reach services that only listen on this Mac. It is a selector choice like a proxy (a
   hop through a loopback SOCKS listener, port 17891, where that check runs), so switching any
-  device between Proxy, Direct and Block takes effect without restarting sing-box.
+  device between Proxy, Direct and Block normally takes effect without restarting sing-box.
+  The exception is leaving a session **new proxy** made: the session is removed, which restarts
+  sing-box.
 - DNS from devices gets fake-IP answers for A records only; other query types are refused.
 - When the service stops, the anchor keeps only the block rules, so devices that still use this
   Mac as their router get no internet instead of being forwarded unproxied (macOS may have IP
