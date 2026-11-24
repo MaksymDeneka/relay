@@ -113,4 +113,6 @@ test('block-only rules keep devices offline while the service is stopped', () =>
   const rules = renderRules({ deviceIps: ['192.168.0.201'], ports, blockOnly: true });
   assert.doesNotMatch(rules, /rdr/);
   assert.match(rules, /^block drop in quick inet from <relay_devices> to ! <relay_local>$/m);
+  // Including DNS to a resolver on the LAN or this Mac.
+  assert.match(rules, /^block drop in quick inet proto \{ tcp udp \} from <relay_devices> to any port 53$/m);
 });

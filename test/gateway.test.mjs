@@ -43,6 +43,9 @@ function fakes({ failSelect = false } = {}) {
     async clear() {
       log.push('pf clear');
     },
+    async killStates(ips) {
+      if (ips.length) log.push(`pf kill ${ips.join(' ')}`);
+    },
   };
   const store = {
     data: {
@@ -64,7 +67,28 @@ test('a newly listed IP is blocked before sing-box is checked and started', asyn
   const { gateway, log } = fakes();
   cleanup(t, gateway);
   await gateway.apply();
-  assert.deepEqual(log, ['pf block-only', 'check', 'restart', 'pf full']);
+  assert.deepEqual(log, ['pf block-only', 'pf kill 192.168.0.201', 'check', 'restart', 'pf full']);
+});
+
+test('adding a device drops only the new IP\'s existing connections', async (t) => {
+  const { gateway, store, log } = fakes();
+  cleanup(t, gateway);
+  await gateway.apply();
+  store.data.devices.push({ id: 'd2', ip: '192.168.0.202', mode: 'block', proxyId: null });
+  await gateway.apply();
+  assert.deepEqual(log.slice(5), ['pf block-only', 'pf kill 192.168.0.202', 'check', 'restart', 'pf full']);
+});
+
+test('a config sing-box rejects blocks and stops instead of leaving older routes running', async (t) => {
+  const { gateway, singbox, store, log } = fakes();
+  cleanup(t, gateway);
+  await gateway.apply();
+  store.data.proxies.push({ id: 'bbb', type: 'socks5', host: 'q.example', port: 2, username: '', password: '' });
+  store.data.devices[0].mode = 'direct';
+  singbox.check = async () => ({ ok: false, output: 'bad config' });
+  await assert.rejects(gateway.apply(), /bad config/);
+  assert.deepEqual(log.slice(-2), ['pf block-only', 'stop']);
+  assert.equal(singbox.running, false);
 });
 
 test('a failed route switch blocks, stops sing-box and rebuilds next time', async (t) => {

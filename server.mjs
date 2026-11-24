@@ -406,7 +406,7 @@ async function admit(req, res, url, listener) {
 }
 
 function createServer(listener) {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     if (req.url === '/healthz' && req.method === 'GET') return finish(res, 200, 'ok');
     if (!req.url?.startsWith('/') || req.url.startsWith('//')) return finish(res, 400, 'Invalid path.');
     const url = new URL(req.url, 'http://relay.local');
@@ -422,6 +422,10 @@ function createServer(listener) {
       else res.end();
     }
   });
+  // Node drops headers past maxHeadersCount (2000) without an error. A forwarded request must
+  // never lose its Forwarded/X-Forwarded-*/Tailscale-* headers that way and pass as local.
+  server.maxHeadersCount = 0;
+  return server;
 }
 
 const servers = [createServer('tailnet')];

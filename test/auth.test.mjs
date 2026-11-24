@@ -186,6 +186,9 @@ test('without access.json, localhost needs an explicit opt-in and never accepts 
       for (const headers of [{ 'x-forwarded-for': '100.64.0.9' }, { 'tailscale-user-login': 'someone@example.com' }, { forwarded: 'for=100.64.0.9' }]) {
         assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`, { headers })).status, 403);
       }
+      // Past Node's default header count, a forwarding header added last must still be seen.
+      const padded = Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [`x-p${i}`, '1']));
+      assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`, { headers: { ...padded, 'x-forwarded-for': '100.64.0.9' } })).status, 403);
     } finally {
       child.kill();
       fs.rmSync(dir, { recursive: true, force: true });
