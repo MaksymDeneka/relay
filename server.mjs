@@ -53,7 +53,9 @@ function accessProblem(access) {
   const text = (value) => typeof value === 'string' && value.trim() !== '';
   const port = (value) => Number.isInteger(value) && value > 0 && value < 65536;
   if (!access || typeof access !== 'object' || Array.isArray(access)) return 'expected an object.';
-  if (access.tailnet !== undefined && !(text(access.tailnet?.host) && text(access.tailnet?.allowedLogin))) {
+  // Once the file exists, the owner check is required: a missing or misspelled tailnet block
+  // must not leave the localhost fallback open behind Tailscale Serve.
+  if (!(text(access.tailnet?.host) && text(access.tailnet?.allowedLogin))) {
     return 'tailnet needs both host and allowedLogin.';
   }
   if (access.public !== undefined) {

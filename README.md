@@ -77,7 +77,8 @@ the one another dashboard on the same host uses, and password managers offer the
 password for both. Sign-ins are capped at 5 per minute. To sign out every phone, delete
 `settings.sessionSecret` from `data/state.json` and restart the service.
 
-Without `access.json`, only `http://localhost:8787` works. With it, every request on port 8787
+Without `access.json`, only `http://localhost:8787` works. Once the file exists, its `tailnet`
+block is required. With it, every request on port 8787
 needs the Tailscale owner identity, including ones with a `localhost` Host header (Serve passes
 the client's Host through). If `access.json` can't be read or is incomplete (for example a
 `tailnet` entry without `allowedLogin`), the dashboard refuses every request until it is fixed.

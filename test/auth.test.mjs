@@ -148,7 +148,7 @@ test('server admits the tailnet owner, local requests and signed-in phones only'
 });
 
 test('a broken access.json locks the dashboard instead of opening localhost', async () => {
-  const cases = ['{ not json', JSON.stringify({ tailnet: { host: 'mac.example.ts.net:1' } })];
+  const cases = ['{ not json', '{}', JSON.stringify({ tailnet: { host: 'mac.example.ts.net:1' } }), JSON.stringify({ tailNet: { host: 'mac.example.ts.net:1', allowedLogin: 'owner@example.com' } })];
   for (const contents of cases) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-access-'));
     const port = await freePort();

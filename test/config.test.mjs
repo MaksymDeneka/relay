@@ -49,12 +49,27 @@ test('Direct goes through the guarded loopback, never a plain direct outbound', 
   assert.deepEqual([hop.server, hop.server_port, inbound.listen, inbound.listen_port], ['127.0.0.1', 17891, '127.0.0.1', 17891]);
   assert.deepEqual(inbound.users, [{ username: hop.username, password: hop.password }]);
   // Resolve on the Mac, refuse loopback, tailnet and fake IPs, then dial out.
-  const guard = config.route.rules.filter((r) => r.inbound?.includes('direct-in'));
+  const guard = config.route.rules.filter((r) => r.inbound?.includes('direct-in') && !r.network);
   assert.deepEqual(guard.map((r) => r.action ?? r.outbound), ['resolve', 'reject', 'direct']);
   assert.equal(guard[0].server, 'local');
   assert.ok(guard[1].ip_cidr.includes('127.0.0.0/8') && guard[1].ip_cidr.includes('100.64.0.0/10') && guard[1].ip_cidr.includes('198.18.0.0/15'));
   const firstDevice = config.route.rules.findIndex((r) => r.source_ip_cidr);
   assert.ok(config.route.rules.indexOf(guard[2]) < firstDevice);
+});
+
+test('the Direct hop never carries UDP, not even before the dashboard exception', () => {
+  const config = buildConfig({ devices, proxies, ports, clashSecret: 's', dashboards: { domains: ['mac.example.ts.net'], ports: [10000] } });
+  const udp = config.route.rules.findIndex((r) => r.inbound?.includes('direct-in') && r.network?.includes('udp'));
+  assert.equal(config.route.rules[udp].action, 'reject');
+  assert.ok(udp < config.route.rules.findIndex((r) => r.domain));
+});
+
+test('selector tags carry the restart epoch, so cached choices from an earlier run never apply', () => {
+  const config = buildConfig({ devices, proxies, ports, clashSecret: 's', epoch: 'k1' });
+  const tags = config.outbounds.filter((o) => o.type === 'selector').map((o) => o.tag);
+  assert.deepEqual(tags, ['dev-d1.k1', 'dev-d2.k1', 'dev-d3.k1']);
+  assert.deepEqual(config.route.rules.filter((r) => r.source_ip_cidr).map((r) => r.outbound), tags);
+  assert.deepEqual(config.outbounds.filter((o) => o.type === 'selector').map((o) => o.default), ['p-aaa', 'direct-guarded', 'block']);
 });
 
 test('own dashboard bypasses the proxy only on its ports, matched before sniffing', () => {

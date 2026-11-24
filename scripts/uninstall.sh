@@ -14,10 +14,16 @@ rm -f "/Library/LaunchDaemons/$LABEL.plist"
 TOKEN_FILE="$(cd "$(dirname "$0")/.." && pwd)/data/runtime/pf-token"
 if [[ -f "$TOKEN_FILE" ]]; then
   read -r TOKEN BOOT < "$TOKEN_FILE" || true
-  NOW_BOOT="$(sysctl -n kern.boottime | sed -E 's/.*sec = ([0-9]+).*/\1/')"
+  # kern.boottime reads "{ sec = 1795505921, usec = 883364 } ..."; Relay saves the sec field.
+  NOW_BOOT="$(sysctl -n kern.boottime | sed -E 's/^\{ sec = ([0-9]+),.*/\1/')"
   if [[ -n "${TOKEN:-}" && "${BOOT:-}" == "$NOW_BOOT" ]] && /sbin/pfctl -s info 2>/dev/null | grep -q "Status: Enabled"; then
-    /sbin/pfctl -X "$TOKEN" 2>/dev/null || true
+    if /sbin/pfctl -X "$TOKEN" >/dev/null 2>&1; then
+      rm -f "$TOKEN_FILE"
+    else
+      echo "Could not release pf reference $TOKEN; kept $TOKEN_FILE." >&2
+    fi
+  else
+    rm -f "$TOKEN_FILE"
   fi
-  rm -f "$TOKEN_FILE"
 fi
 echo "Relay service removed."
